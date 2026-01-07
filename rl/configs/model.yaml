@@ -1,0 +1,9 @@
+# Model configuration
+model:
+  type: "transformer"
+  K: 8  # Number of input features
+  d_model: 64
+  nhead: 4
+  num_layers: 2
+  hidden: 64
+  use_per_factor_mask: true  # Use per-factor masks (2*K input)

@@ -1,0 +1,8 @@
+# Evaluation configuration
+eval:
+  block_len: 12
+  device: "cpu"
+  metrics:
+    - "sharpe_excess"
+    - "final_wealth_port"
+    - "final_wealth_ew"
