@@ -3,5 +3,5 @@ __pycache__/
 *.pyc
 checkpoints/
 backtest_logs.json
-backtest_portfolios.json
-backtest_portfolios*.csv
+
+
