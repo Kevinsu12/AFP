@@ -1,8 +1,0 @@
-# Training configuration
-train:
-  epochs: 30
-  length: 12
-  lr: 1e-4
-  device: "cpu"
-  seed: 42
-  grad_clip: 1.0

@@ -1,5 +1,6 @@
-"""Policy models for reinforcement learning."""
+"""Model definitions for SAC portfolio management."""
 
-from .transformer_policy import TransformerPolicy
+from .transformer_policy import TransformerBackbone
+from .transformer_actor_critic import TransformerActor, TransformerQCritic
 
-__all__ = ["TransformerPolicy"]
+__all__ = ["TransformerBackbone", "TransformerActor", "TransformerQCritic"]

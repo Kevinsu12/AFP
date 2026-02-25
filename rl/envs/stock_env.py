@@ -12,17 +12,12 @@ def build_environment_from_df(
     df: pd.DataFrame,
     factor_cols: List[str],
     ret_col: str = "ret_next",
-    id_col: str = "permno",
+    id_col: str = "ticker",
     date_col: str = "date",
     window: int = 48,
-    min_obs_in_window: int = 1,
-    stochastic: bool = False,
-    rebalance_prob: float = 0.3,
-    max_change: int = 2,
-    min_portfolio_size: int = 3,
-    max_portfolio_size: int = 15
+    min_obs_in_window: int = 1
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List, List[np.ndarray]]:
-    """Build environment from stock data with stochastic portfolio rebalancing.
+    """Build environment from stock data for fixed-universe portfolio training.
     
     Args:
         df: DataFrame with stock data
@@ -31,13 +26,7 @@ def build_environment_from_df(
         id_col: Name of asset ID column
         date_col: Name of date column
         window: Total window size for features (default: 48)
-        length: Length of sequence to extract (default: 24)
         min_obs_in_window: Minimum observations required in window
-        stochastic: Enable stochastic portfolio selection
-        rebalance_prob: Probability of rebalancing each time step (0.0-1.0)
-        max_change: Maximum number of stocks to add/remove per rebalancing
-        min_portfolio_size: Minimum portfolio size
-        max_portfolio_size: Maximum portfolio size
         
     Returns:
         Tuple of (X_train, R_train, ids_t, dates, M_feat_list) where:
@@ -48,6 +37,16 @@ def build_environment_from_df(
         - M_feat_list: List of per-factor mask arrays (N_t, W, K)
     """
     df = df.copy()
+    # Normalize common column names if needed (case-insensitive)
+    lower_map = {col.lower(): col for col in df.columns}
+    for expected in [date_col, id_col, ret_col]:
+        if expected not in df.columns and expected.lower() in lower_map:
+            df = df.rename(columns={lower_map[expected.lower()]: expected})
+
+    missing = [c for c in [date_col, id_col, ret_col] if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
     df[date_col] = pd.to_datetime(df[date_col])
     df.sort_values([id_col, date_col], inplace=True)
 
@@ -67,13 +66,9 @@ def build_environment_from_df(
     RET = RET.to_numpy(dtype=np.float32)
 
     X_train, R_train, ids_t, dates = [], [], [], []
-    M_list = []  
     M_feat_list = []
     T_full, N_full = FACTORS.shape[0], FACTORS.shape[1]
 
-    # Initialize portfolio for stochastic mode
-    current_portfolio = None
-    
     for t in range(window, T_full):
         win = FACTORS[t - window : t, :, :]        
         r_t = RET[t, :]                         
@@ -92,74 +87,6 @@ def build_environment_from_df(
         keep = tradable & enough_hist         
         if keep.sum() < 1:
             continue
-
-        # Stochastic portfolio selection logic
-        if stochastic:
-            # First time step: initialize random portfolio
-            if current_portfolio is None:
-                available_stocks = np.where(keep)[0]
-                if len(available_stocks) < min_portfolio_size:
-                    continue
-                
-                # Random initial portfolio size (3-11 stocks)
-                initial_size = min(
-                    np.random.randint(min_portfolio_size, min(max_portfolio_size, len(available_stocks)) + 1),
-                    len(available_stocks)
-                )
-                current_portfolio = np.random.choice(available_stocks, size=initial_size, replace=False)
-            
-            # Check if we should rebalance (30% chance)
-            if np.random.random() < rebalance_prob:
-                available_stocks = np.where(keep)[0]
-                current_available = np.intersect1d(current_portfolio, available_stocks)
-                
-                if len(current_available) >= min_portfolio_size:
-                    # Determine how many stocks to change (1-2 stocks)
-                    num_changes = min(max_change, len(current_available))
-                    
-                    # Randomly decide: add, remove, or both
-                    action = np.random.choice(['add', 'remove', 'both'])
-                    
-                    if action == 'add' and len(current_available) < max_portfolio_size:
-                        # Add stocks
-                        available_to_add = np.setdiff1d(available_stocks, current_available)
-                        if len(available_to_add) > 0:
-                            num_to_add = min(num_changes, len(available_to_add), 
-                                           max_portfolio_size - len(current_available))
-                            new_stocks = np.random.choice(available_to_add, size=num_to_add, replace=False)
-                            current_portfolio = np.concatenate([current_available, new_stocks])
-                    
-                    elif action == 'remove' and len(current_available) > min_portfolio_size:
-                        # Remove stocks
-                        num_to_remove = min(num_changes, len(current_available) - min_portfolio_size)
-                        stocks_to_remove = np.random.choice(current_available, size=num_to_remove, replace=False)
-                        current_portfolio = np.setdiff1d(current_available, stocks_to_remove)
-                    
-                    elif action == 'both' and len(current_available) > min_portfolio_size:
-                        # Both add and remove
-                        num_to_remove = min(num_changes // 2, len(current_available) - min_portfolio_size)
-                        num_to_add = min(num_changes - num_to_remove, 
-                                       max_portfolio_size - len(current_available))
-                        
-                        if num_to_remove > 0:
-                            stocks_to_remove = np.random.choice(current_available, size=num_to_remove, replace=False)
-                            current_available = np.setdiff1d(current_available, stocks_to_remove)
-                        
-                        if num_to_add > 0:
-                            available_to_add = np.setdiff1d(available_stocks, current_available)
-                            if len(available_to_add) > 0:
-                                new_stocks = np.random.choice(available_to_add, size=num_to_add, replace=False)
-                                current_available = np.concatenate([current_available, new_stocks])
-                        
-                        current_portfolio = current_available
-                    
-            
-            # Use current portfolio for this time step
-            keep = np.zeros_like(keep)
-            keep[current_portfolio] = True
-            
-            if keep.sum() < 1:
-                continue
 
         win_filled = win.copy()                 
         nan_mask = np.isnan(win_filled)
@@ -188,13 +115,8 @@ def build_environment(
     min_obs_in_window: int = 1,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    stochastic: bool = False,
-    rebalance_prob: float = 0.3,
-    max_change: int = 2,
-    min_portfolio_size: int = 3,
-    max_portfolio_size: int = 15
 ) -> Tuple[List[np.ndarray], List[np.ndarray], List[np.ndarray], List, List[np.ndarray]]:
-    """Build environment from parquet data files with stochastic portfolio selection.
+    """Build environment from parquet data files for fixed-universe training.
     
     Args:
         data_dir: Path to data directory containing train/test/val splits
@@ -207,11 +129,6 @@ def build_environment(
         min_obs_in_window: Minimum observations required in window
         start_date: Optional start date filter (YYYY-MM-DD)
         end_date: Optional end date filter (YYYY-MM-DD)
-        stochastic: Enable stochastic portfolio selection
-        rebalance_prob: Probability of rebalancing each time step (0.0-1.0)
-        max_change: Maximum number of stocks to add/remove per rebalancing
-        min_portfolio_size: Minimum portfolio size
-        max_portfolio_size: Maximum portfolio size
     
     Returns:
         Tuple of (X_train, R_train, ids_t, dates, M_feat_list) where:
@@ -240,10 +157,5 @@ def build_environment(
         id_col=id_col,
         date_col=date_col,
         window=window,
-        min_obs_in_window=min_obs_in_window,
-        stochastic=stochastic,
-        rebalance_prob=rebalance_prob,
-        max_change=max_change,
-        min_portfolio_size=min_portfolio_size,
-        max_portfolio_size=max_portfolio_size
+        min_obs_in_window=min_obs_in_window
     )
